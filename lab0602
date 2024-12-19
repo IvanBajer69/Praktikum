@@ -1,0 +1,81 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/wait.h>
+
+#define MAX_CMD_LEN 1024
+
+// Функција за извршување на командата
+void execute_command(char *cmd, char **args) {
+    if (execvp(cmd, args) == -1) {
+        perror("execvp");
+        exit(1);
+    }
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 4) {
+        fprintf(stderr, "Грешка: треба да се внесат три команди како аргументи\n");
+        return 1;
+    }
+
+    int pipe1[2], pipe2[2];
+    pid_t pid1, pid2, pid3;
+
+    // Креирање на два pipe-а
+    if (pipe(pipe1) == -1 || pipe(pipe2) == -1) {
+        perror("pipe");
+        return 1;
+    }
+
+    // Првиот процес (Komanda1)
+    pid1 = fork();
+    if (pid1 == 0) {
+        // Во првиот процес
+        close(pipe1[0]);  // Не треба да читаме од pipe1
+        close(pipe2[0]);
+        close(pipe2[1]);
+
+        // Прочитување на командата од аргументите и извршување
+        char *args1[] = {argv[1], NULL};
+        execute_command(argv[1], args1);
+    }
+
+    // Вториот процес (Komanda2)
+    pid2 = fork();
+    if (pid2 == 0) {
+        // Во вториот процес
+        close(pipe1[1]);  // Не треба да пишуваме во pipe1
+        close(pipe2[0]);  // Не треба да читаме од pipe2
+
+        // Прочитување од pipe1 и пишување во pipe2
+        char *args2[] = {argv[2], NULL};
+        execute_command(argv[2], args2);
+    }
+
+    // Третиот процес (Komanda3)
+    pid3 = fork();
+    if (pid3 == 0) {
+        // Во третиот процес
+        close(pipe1[0]);
+        close(pipe1[1]);
+        close(pipe2[1]);
+
+        // Прочитување од pipe2
+        char *args3[] = {argv[3], NULL};
+        execute_command(argv[3], args3);
+    }
+
+    // Чекање да завршат сите процеси
+    close(pipe1[0]);
+    close(pipe1[1]);
+    close(pipe2[0]);
+    close(pipe2[1]);
+
+    wait(NULL);  // Чекање на процесот 1
+    wait(NULL);  // Чекање на процесот 2
+    wait(NULL);  // Чекање на процесот 3
+
+    return 0;
+}
