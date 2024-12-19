@@ -1,0 +1,91 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+
+#define MAX_BUF 1024
+
+// Функција за Komanda1: чита од тастатура и пишува во pipe
+void komanda1(int write_fd) {
+    char input[MAX_BUF];
+    printf("Внесете текст за Komanda1: ");
+    fgets(input, MAX_BUF, stdin);
+    write(write_fd, input, strlen(input));  // Пишува во pipe
+    close(write_fd);  // Затворање на pipe
+}
+
+// Функција за Komanda2: чита од pipe и пренесува во друг pipe
+void komanda2(int read_fd, int write_fd) {
+    char buffer[MAX_BUF];
+    ssize_t bytes_read;
+    while ((bytes_read = read(read_fd, buffer, MAX_BUF)) > 0) {
+        write(write_fd, buffer, bytes_read);  // Пренесува од pipe во pipe
+    }
+    close(read_fd);  // Затворање на стар pipe
+    close(write_fd); // Затворање на нов pipe
+}
+
+// Функција за Komanda3: чита од pipe и брои празни места
+void komanda3(int read_fd) {
+    char buffer[MAX_BUF];
+    ssize_t bytes_read = read(read_fd, buffer, MAX_BUF);
+    if (bytes_read < 0) {
+        perror("Грешка при читање од pipe");
+        exit(1);
+    }
+    
+    int spaces = 0;
+    for (int i = 0; i < bytes_read; i++) {
+        if (buffer[i] == ' ') {
+            spaces++;
+        }
+    }
+
+    printf("Број на празни места: %d\n", spaces);
+    close(read_fd);  // Затворање на pipe
+}
+
+int main() {
+    int pipe1[2], pipe2[2];
+
+    // Креирање на pipe-ови
+    if (pipe(pipe1) == -1 || pipe(pipe2) == -1) {
+        perror("Грешка при креирање на pipe");
+        exit(1);
+    }
+
+    // Создавање на процес 1: Komanda1
+    if (fork() == 0) {
+        close(pipe1[0]);  // Затвори го читачкиот крај на pipe1
+        komanda1(pipe1[1]);
+        exit(0);  // Заврши го процесот
+    }
+
+    // Создавање на процес 2: Komanda2
+    if (fork() == 0) {
+        close(pipe1[1]);  // Затвори го пишувачкиот крај на pipe1
+        close(pipe2[0]);  // Затвори го читачкиот крај на pipe2
+        komanda2(pipe1[0], pipe2[1]);
+        exit(0);  // Заврши го процесот
+    }
+
+    // Создавање на процес 3: Komanda3
+    if (fork() == 0) {
+        close(pipe2[1]);  // Затвори го пишувачкиот крај на pipe2
+        komanda3(pipe2[0]);
+        exit(0);  // Заврши го процесот
+    }
+
+    // Родителскиот процес ги затвора сите краеви на pipe-овите
+    close(pipe1[0]);
+    close(pipe1[1]);
+    close(pipe2[0]);
+    close(pipe2[1]);
+
+    // Чекање на сите процеси да завршат
+    for (int i = 0; i < 3; i++) {
+        wait(NULL);
+    }
+
+    return 0;
+}
