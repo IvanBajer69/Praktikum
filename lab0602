@@ -4,78 +4,113 @@
 #include <string.h>
 #include <sys/wait.h>
 
-#define MAX_CMD_LEN 1024
+#define MAX_BUFFER 1024
 
-// Функција за извршување на командата
-void execute_command(char *cmd, char **args) {
-    if (execvp(cmd, args) == -1) {
-        perror("execvp");
+// Функција која ќе ја изврши дадената команда
+void execute_command(const char *command, int read_fd, int write_fd) {
+    pid_t pid;
+    int pipe_fd[2];
+
+    // Создавање на нов pipe
+    if (pipe(pipe_fd) == -1) {
+        perror("pipe creation failed");
         exit(1);
+    }
+
+    pid = fork();
+    if (pid == -1) {
+        perror("fork failed");
+        exit(1);
+    }
+
+    if (pid == 0) {
+        // Дете процес
+        // Затвори ненужните краеви на pipe
+        close(pipe_fd[0]);  // Затвори го читачкиот крај на новиот pipe
+        if (read_fd != -1) {
+            dup2(read_fd, STDIN_FILENO); // Пренасочи влезот
+        }
+        if (write_fd != -1) {
+            dup2(pipe_fd[1], STDOUT_FILENO); // Пренасочи излезот
+        }
+
+        // Разделување на командата
+        char *args[MAX_BUFFER];
+        char *command_copy = strdup(command);
+        char *token = strtok(command_copy, " ");
+        int i = 0;
+
+        while (token != NULL) {
+            args[i++] = token;
+            token = strtok(NULL, " ");
+        }
+        args[i] = NULL; // Последниот аргумент мора да биде NULL за execvp
+
+        // Извршување на командата
+        execvp(args[0], args);
+
+        // Ако командата не може да се изврши
+        perror("execvp failed");
+        exit(1);
+    } else {
+        // Родителски процес
+        close(pipe_fd[1]);  // Затвори го пишувачкиот крај на новиот pipe
+        if (read_fd != -1) {
+            close(read_fd); // Затвори го стариот читачки крај
+        }
+        wait(NULL);  // Чекај на дете процесот
     }
 }
 
 int main(int argc, char *argv[]) {
     if (argc != 4) {
-        fprintf(stderr, "Грешка: треба да се внесат три команди како аргументи\n");
+        fprintf(stderr, "Програмата бара точно три аргументи за командите.\n");
         return 1;
     }
+
+    // Првата команда, втората команда, третата команда
+    char *command1 = argv[1];
+    char *command2 = argv[2];
+    char *command3 = argv[3];
 
     int pipe1[2], pipe2[2];
-    pid_t pid1, pid2, pid3;
 
-    // Креирање на два pipe-а
+    // Креирање на два PIPE-а
     if (pipe(pipe1) == -1 || pipe(pipe2) == -1) {
-        perror("pipe");
-        return 1;
+        perror("pipe creation failed");
+        exit(1);
     }
 
-    // Првиот процес (Komanda1)
-    pid1 = fork();
-    if (pid1 == 0) {
-        // Во првиот процес
-        close(pipe1[0]);  // Не треба да читаме од pipe1
-        close(pipe2[0]);
-        close(pipe2[1]);
+    // Првиот процес (ex: echo Hello)
+    execute_command(command1, -1, pipe1[1]);
 
-        // Прочитување на командата од аргументите и извршување
-        char *args1[] = {argv[1], NULL};
-        execute_command(argv[1], args1);
-    }
+    // Вториот процес (ex: grep World)
+    execute_command(command2, pipe1[0], pipe2[1]);
 
-    // Вториот процес (Komanda2)
-    pid2 = fork();
-    if (pid2 == 0) {
-        // Во вториот процес
-        close(pipe1[1]);  // Не треба да пишуваме во pipe1
-        close(pipe2[0]);  // Не треба да читаме од pipe2
-
-        // Прочитување од pipe1 и пишување во pipe2
-        char *args2[] = {argv[2], NULL};
-        execute_command(argv[2], args2);
-    }
-
-    // Третиот процес (Komanda3)
-    pid3 = fork();
-    if (pid3 == 0) {
-        // Во третиот процес
-        close(pipe1[0]);
-        close(pipe1[1]);
-        close(pipe2[1]);
-
-        // Прочитување од pipe2
-        char *args3[] = {argv[3], NULL};
-        execute_command(argv[3], args3);
-    }
-
-    // Чекање да завршат сите процеси
-    close(pipe1[0]);
-    close(pipe1[1]);
-    close(pipe2[0]);
-    close(pipe2[1]);
-
-    wait(NULL);  // Чекање на процесот 1
-    wait(NULL);  // Чекање на процесот 2
-    wait(NULL);  // Чекање на процесот 3
+    // Третиот процес (ex: wc -w)
+    execute_command(command3, pipe2[0], -1);
 
     return 0;
 }
+Функцијата execute_command:
+
+Оваа функција ги извршува командите преку процеси. Применува fork() за да креира нов процес, а потоа ги пренасочува влезот (stdin) и излезот (stdout) на процесот.
+Со помош на execvp() ја извршува дадената команда, која се поделува на компоненти (командата и нејзините аргументи).
+Главната функција (main):
+
+Оваа функција ја прима командата како аргументи и креира два PIPE-а.
+Првиот процес го извршува command1, вториот процес го извршува command2, а третиот процес ја извршува command3. Комуникацијата помеѓу процесите се врши преку PIPE.
+Создавање на PIPE:
+
+Се креираат два PIPE-а:
+pipe1 се користи за комуникација помеѓу првиот и вториот процес.
+pipe2 се користи за комуникација помеѓу вториот и третиот процес.
+Комуникација преку PIPE:
+
+Првиот процес пишува во pipe1, вториот процес чита од pipe1 и пишува во pipe2, а третиот процес чита од pipe2.
+Затворање на ненужни краеви:
+
+Во секој процес, се затвораат ненужните краеви на PIPE (читањето и пишувањето).
+Извршување на командите:
+
+execvp() е користено за да се изврши секоја команда со соодветните аргументи.
